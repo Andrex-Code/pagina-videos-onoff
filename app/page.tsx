@@ -1,6 +1,5 @@
 'use client';
 
-import { upload } from '@vercel/blob/client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CHANNELS, type ChannelId, type VideoItem, type VideoManifest } from '@/lib/types';
 import { slugify } from '@/lib/slug';
@@ -67,31 +66,22 @@ export default function HomePage() {
     setUploading(true);
     setStatus('Subiendo video a Vercel Blob...');
     try {
-      const blob = await upload(`videos/${form.channel}/${slugify(form.intentKey)}-${slugify(file.name)}`, file, {
-        access: 'public',
-        handleUploadUrl: '/api/blob-upload',
-        clientPayload: JSON.stringify({ adminPassword, channel: form.channel, title: form.title })
-      });
+      const data = new FormData();
+      data.append('file', file);
+      data.append('channel', form.channel);
+      data.append('title', form.title);
+      data.append('intentKey', form.intentKey);
+      data.append('description', form.description);
+      data.append('tags', form.tags);
 
-      setStatus('Registrando video en la biblioteca...');
-      const res = await fetch('/api/videos/register', {
+      const res = await fetch('/api/videos/upload', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
-        body: JSON.stringify({
-          channel: form.channel,
-          title: form.title,
-          intentKey: form.intentKey,
-          description: form.description,
-          tags: form.tags,
-          blobUrl: blob.url,
-          downloadUrl: blob.downloadUrl,
-          pathname: blob.pathname,
-          contentType: blob.contentType,
-          size: file.size
-        })
+        headers: { 'x-admin-password': adminPassword },
+        body: data
       });
       const payload = await res.json();
-      if (!res.ok) throw new Error(payload.error || 'No se pudo registrar el video.');
+      if (!res.ok || !payload.ok) throw new Error(payload.error || 'No se pudo subir el video.');
+
       setManifest(payload.manifest);
       setActiveVideo(payload.video);
       setStatus('Video subido. Ya puedes copiar la URL directa o el nodo media.');
