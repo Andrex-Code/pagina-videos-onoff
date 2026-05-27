@@ -1,5 +1,6 @@
 'use client';
 
+import { upload } from '@vercel/blob/client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CHANNELS, type ChannelId, type VideoItem, type VideoManifest } from '@/lib/types';
 import { slugify } from '@/lib/slug';
@@ -20,6 +21,15 @@ function mediaNode(video: VideoItem) {
     text: `Te comparto el video: ${video.title}`,
     o_connection: 'to_nat_post_respuesta'
   }, null, 2);
+}
+
+async function parseJsonResponse(res: Response) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(text || `Error HTTP ${res.status}`);
+  }
 }
 
 export default function HomePage() {
@@ -64,23 +74,33 @@ export default function HomePage() {
     if (!form.intentKey.trim()) return setStatus('Escribe la clave de intención.');
 
     setUploading(true);
-    setStatus('Subiendo video a Vercel Blob...');
+    setStatus('Subiendo video directamente a Vercel Blob...');
     try {
-      const data = new FormData();
-      data.append('file', file);
-      data.append('channel', form.channel);
-      data.append('title', form.title);
-      data.append('intentKey', form.intentKey);
-      data.append('description', form.description);
-      data.append('tags', form.tags);
-
-      const res = await fetch('/api/videos/upload', {
-        method: 'POST',
-        headers: { 'x-admin-password': adminPassword },
-        body: data
+      const blob = await upload(`videos/${form.channel}/${slugify(form.intentKey)}-${slugify(file.name || 'video')}`, file, {
+        access: 'public',
+        handleUploadUrl: '/api/blob-upload',
+        clientPayload: JSON.stringify({ adminPassword, channel: form.channel, title: form.title })
       });
-      const payload = await res.json();
-      if (!res.ok || !payload.ok) throw new Error(payload.error || 'No se pudo subir el video.');
+
+      setStatus('Registrando video en la biblioteca...');
+      const res = await fetch('/api/videos/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
+        body: JSON.stringify({
+          channel: form.channel,
+          title: form.title,
+          intentKey: form.intentKey,
+          description: form.description,
+          tags: form.tags,
+          blobUrl: blob.url,
+          downloadUrl: blob.downloadUrl,
+          pathname: blob.pathname,
+          contentType: blob.contentType,
+          size: file.size
+        })
+      });
+      const payload = await parseJsonResponse(res);
+      if (!res.ok || !payload.ok) throw new Error(payload.error || 'No se pudo registrar el video.');
 
       setManifest(payload.manifest);
       setActiveVideo(payload.video);
@@ -101,7 +121,7 @@ export default function HomePage() {
       headers: { 'Content-Type': 'application/json', 'x-admin-password': adminPassword },
       body: JSON.stringify({ id: video.id, deleteBlob: false })
     });
-    const payload = await res.json();
+    const payload = await parseJsonResponse(res);
     if (!res.ok) return setStatus(payload.error || 'No se pudo eliminar.');
     setManifest(payload.manifest);
     setActiveVideo(null);
@@ -139,7 +159,7 @@ export default function HomePage() {
           <label>Clave de intención<input value={form.intentKey} onChange={(e) => setForm({ ...form, intentKey: e.target.value })} placeholder="venta_contado" /></label>
           <label>Descripción<textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></label>
           <label>Tags<input value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} placeholder="ventas, contado, POS" /></label>
-          <label>Archivo<input ref={fileRef} type="file" accept="video/mp4,video/webm,video/quicktime" /></label>
+          <label>Archivo<input ref={fileRef} type="file" accept="video/mp4,video/webm,video/quicktime,.mov" /></label>
           <button disabled={uploading}>{uploading ? 'Subiendo...' : 'Subir video'}</button>
           {status && <p className="status">{status}</p>}
         </form>
